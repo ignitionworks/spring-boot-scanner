@@ -83,21 +83,21 @@ class CfService {
             null
         }
         var scanResults: List<FileScanner.Result>? = null
-        if (droplet != null && droplet.buildpacks.any { it.name.contains("java") }) {
+        if (droplet?.guid != null && droplet.buildpacks != null && droplet.buildpacks.any { it.name?.contains("java") ?: false }) {
             scanResults = try {
                 logger.info("Scanning java app = $appName")
-                getScanResults(droplet!!.guid, appName)
+                getScanResults("${droplet!!.guid}", appName)
             } catch(e: Exception) {
                 logger.error("Error scanning java app = $appName", e)
                 null
             }
         }
-        return mapOf("processes" to procs, "stats" to stats, "jdkEnv" to jdkEnv, "droplet" to droplet, "scanResults" to scanResults)
+        return mapOf("appGuid" to guid, "processes" to procs, "stats" to stats, "jdkEnv" to jdkEnv, "droplet" to droplet, "scanResults" to scanResults)
     }
 
     private fun getAppProcesses(guid: String) =
         cfCurl("/v3/apps/$guid/processes", CfAppProcessesResponse::class.java) { res: List<CfAppProcessesResponse> ->
-            res.flatMap { it.resources }
+            res.filter { it.resources != null }.flatMap { it.resources!! }
         }
 
     private fun getAppProcessStats(guid: String) =
@@ -105,7 +105,7 @@ class CfService {
             "/v3/processes/$guid/stats",
             CfAppProcessStatsResponse::class.java
         ) { res: List<CfAppProcessStatsResponse> ->
-            res.flatMap { it.resources }
+            res.filter { it.resources != null }.flatMap { it.resources!! }
         }
 
     private fun getAppJdkEnv(guid: String) =
@@ -218,49 +218,49 @@ class CfAppsResponse @JsonCreator constructor(
 }
 
 class CfAppProcessesResponse @JsonCreator constructor(
-    @JsonProperty("resources") val resources: List<Resource>,
-    @JsonProperty("pagination") pagination: Pagination
+    @JsonProperty("resources") val resources: List<Resource>? = null,
+    @JsonProperty("pagination") pagination: Pagination? = null
 ): CfResponse(pagination) {
     data class Resource(
-        @JsonProperty("instances") val instances: Integer,
-        @JsonProperty("disk_in_mb") val diskInMb: Integer,
-        @JsonProperty("memory_in_mb") val memoryInMb: Integer
+        @JsonProperty("instances") val instances: Integer? = null,
+        @JsonProperty("disk_in_mb") val diskInMb: Integer? = null,
+        @JsonProperty("memory_in_mb") val memoryInMb: Integer? = null
     )
 }
 
 class CfAppProcessStatsResponse @JsonCreator constructor(
-    @JsonProperty("resources") val resources: List<Resource>,
-    @JsonProperty("pagination") pagination: Pagination?
+    @JsonProperty("resources") val resources: List<Resource>? = null,
+    @JsonProperty("pagination") pagination: Pagination? = null
 ): CfResponse(pagination) {
     data class Resource(
-        @JsonProperty("state") val state: String,
-        @JsonProperty("usage") val usage: Usage
+        @JsonProperty("state") val state: String? = null,
+        @JsonProperty("usage") val usage: Usage? = null
     )
     data class Usage(
-        @JsonProperty("cpu") val cpu: Float,
-        @JsonProperty("mem") val mem: Integer,
-        @JsonProperty("disk") val disk: Integer,
+        @JsonProperty("cpu") val cpu: Float? = null,
+        @JsonProperty("mem") val mem: Integer? = null,
+        @JsonProperty("disk") val disk: Integer? = null,
     )
 }
 
 class CfAppEnvsResponse @JsonCreator constructor(
-    @JsonProperty("environment_variables") val environmentVariables: Map<String, String>?,
-    @JsonProperty("pagination") pagination: Pagination?
+    @JsonProperty("environment_variables") val environmentVariables: Map<String, String>? = null,
+    @JsonProperty("pagination") pagination: Pagination? = null
 ): CfResponse(pagination)
 
 class CfAppDropletsResponse @JsonCreator constructor(
-    @JsonProperty("guid") val guid: String,
-    @JsonProperty("buildpacks") val buildpacks: List<Buildpack>,
-    @JsonProperty("process_types") val processTypes: ProcessTypes,
-    @JsonProperty("pagination") pagination: Pagination?
+    @JsonProperty("guid") val guid: String? = null,
+    @JsonProperty("buildpacks") val buildpacks: List<Buildpack>? = null,
+    @JsonProperty("process_types") val processTypes: ProcessTypes? = null,
+    @JsonProperty("pagination") pagination: Pagination? = null
 ): CfResponse(pagination) {
     data class Buildpack(
-        @JsonProperty("name") val name: String,
-        @JsonProperty("version") val version: String
+        @JsonProperty("name") val name: String? = null,
+        @JsonProperty("version") val version: String? = null
     )
     data class ProcessTypes(
-        @JsonProperty("task") val task: String,
-        @JsonProperty("web") val web: String,
+        @JsonProperty("task") val task: String? = null,
+        @JsonProperty("web") val web: String? = null,
     )
 }
 
@@ -295,4 +295,3 @@ class ConfigForSpringNative {
         }
     }
 }
-
