@@ -58,28 +58,28 @@ class CfService {
             logger.info("Extracting app processes info for app = $appName")
             getAppProcesses(guid)
         } catch(e: Exception) {
-            logger.error("Error extracting app processes info for app = $appName")
+            logger.error("Error extracting app processes info for app = $appName", e)
             null
         }
         val stats = try {
             logger.info("Extracting app process stats info for app = $appName")
             getAppProcessStats(guid)
         } catch(e: Exception) {
-            logger.error("Error extracting app process stats info for app = $appName")
+            logger.error("Error extracting app process stats info for app = $appName", e)
             null
         }
         val jdkEnv = try {
             logger.info("Extracting jdk env info for app = $appName")
             getAppJdkEnv(guid)
         } catch(e: Exception) {
-            logger.error("Error extracting app jdk env info for app = $appName")
+            logger.error("Error extracting app jdk env info for app = $appName", e)
             null
         }
         val droplet = try {
             logger.info("Extracting app droplet info for app = $appName")
             getAppDroplet(guid)
         } catch(e: Exception) {
-            logger.error("Error extracting app droplet info for app = $appName")
+            logger.error("Error extracting app droplet info for app = $appName", e)
             null
         }
         var scanResults: List<FileScanner.Result>? = null
@@ -88,7 +88,7 @@ class CfService {
                 logger.info("Scanning java app = $appName")
                 getScanResults(droplet!!.guid, appName)
             } catch(e: Exception) {
-                logger.error("Error scanning java app = $appName")
+                logger.error("Error scanning java app = $appName", e)
                 null
             }
         }
