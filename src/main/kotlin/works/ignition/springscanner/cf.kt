@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import org.rauschig.jarchivelib.ArchiverFactory
 import org.slf4j.LoggerFactory
 import org.springframework.aot.hint.ExecutableMode
 import org.springframework.aot.hint.RuntimeHints
@@ -17,6 +18,7 @@ import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Configuration
 import org.springframework.context.annotation.ImportRuntimeHints
 import org.springframework.stereotype.Service
+import org.springframework.util.FileSystemUtils
 import java.io.File
 
 @Service
@@ -30,9 +32,9 @@ class CfService {
 
     val logger = LoggerFactory.getLogger(CfService::class.java)
 
-    suspend fun scanAppsInParallel(): List<Map<String, *>> {
+    suspend fun scanAppsInParallel(spaceGuid: String): List<Map<String, *>> {
         val semaphore = Semaphore(scannedAppsInParallel.toInt())
-        val apps = getApps()
+        val apps = getApps(spaceGuid)
         return coroutineScope {
             val deferredResults = apps.map {
                 // To ensure that the tasks run in parallel using threads
@@ -47,9 +49,9 @@ class CfService {
         }
     }
 
-    private fun getApps(): List<CfAppsResponse.Resource> {
-        return cfCurl("/v3/apps", CfAppsResponse::class.java) { res: List<CfAppsResponse> ->
-            res.flatMap { it.resources }
+    private fun getApps(spaceGuid: String): List<CfAppsResponse.Resource> {
+        return cfCurl("/v3/apps?order_by=name&space_guids=${spaceGuid}", CfAppsResponse::class.java) { res: List<CfAppsResponse> ->
+            res.filter{ it.resources != null }.flatMap { it.resources!! }
         }
     }
 
@@ -138,8 +140,8 @@ class CfService {
         }
         val results = scannerService.scanAppFolder("${dropletsTmpFolder}/${dropletFileName}/app")
         if (cleanupDroplets.toBoolean()) {
-            removeDroplet(dropletFileName)
-            removeDropletFolder(dropletFileName)
+            removeFile("${dropletsTmpFolder}/${dropletFileName}.tgz") // removing droplet tarball
+            removeFile("${dropletsTmpFolder}/${dropletFileName}") // removing droplet folder
         }
         return results
     }
@@ -150,39 +152,56 @@ class CfService {
         val cfOutput = process.inputReader().readLines()
         logger.debug("CF download droplet = $cfOutput")
         if (exitCode != 0) {
-            throw RuntimeException("Error downloading droplet guid=$appName")
+            throw RuntimeException("Error downloading droplet appName=$appName")
         }
     }
 
     private fun extractAppFolderFromDroplet(dropletFileName: String) {
         val dropletFolderPath = "${dropletsTmpFolder}/${dropletFileName}"
-        if (executeCommand("rm", "-rf", dropletFolderPath).waitFor() != 0)
-            throw RuntimeException("Error removing $dropletFolderPath")
-        if (executeCommand("mkdir", dropletFolderPath).waitFor() != 0)
-            throw RuntimeException("Error creating folder $dropletFolderPath")
-        if (executeCommand("tar", "xvfz", "${dropletFolderPath}.tgz", "-C", dropletFolderPath, "app").waitFor() != 0)
-            throw RuntimeException("Error extracting app folder from ${dropletFolderPath}.tgz into $dropletFolderPath")
+        removeFile(dropletFolderPath)
+        createDropletFolder(dropletFolderPath)
+        extractAppFolder(dropletFolderPath)
     }
 
-    private fun removeDropletFolder(dropletFileName: String) {
-        val dropletFolder = "${dropletsTmpFolder}/${dropletFileName}"
-        if (executeCommand("rm", "-rf", dropletFolder).waitFor() != 0)
-            throw RuntimeException("Error removing $dropletFolder")
+    private fun extractAppFolder(dropletFolderPath: String) {
+        try {
+            val archiver = ArchiverFactory.createArchiver("tar", "gz")
+            // TODO Extract just the app folder
+            archiver.extract(File("${dropletFolderPath}.tgz"), File(dropletFolderPath))
+        } catch (e: Exception) {
+            throw RuntimeException("Error extracting file ${dropletFolderPath}.tgz into folder $dropletFolderPath", e)
+        }
     }
 
-    private fun removeDroplet(dropletFileName: String) {
-        val dropletPath = "${dropletsTmpFolder}/${dropletFileName}.tgz"
-        if (executeCommand("rm", "-rf", dropletPath).waitFor() != 0)
-            throw RuntimeException("Error removing $dropletPath")
+    private fun createDropletFolder(dropletFolderPath: String) {
+        try {
+            val result = File(dropletFolderPath).mkdir()
+            if (!result) throw RuntimeException()
+        } catch (e: Exception) {
+            throw RuntimeException("Error creating folder $dropletFolderPath", e)
+        }
+    }
+
+    private fun removeFile(filePath: String) {
+        try {
+            val file = File(filePath)
+            if (!file.exists())
+                return
+            val result = FileSystemUtils.deleteRecursively(file)
+            // FIXME Failing on windows 
+            // if (!result) throw RuntimeException()
+        } catch (e: Exception) {
+            throw RuntimeException("Error removing $filePath", e)
+        }
     }
 
     private fun <T: CfResponse, O> cfCurl(url: String, clazz: Class<T>, adapter: (List<T>) -> O): O {
         val array = mutableListOf<T>()
         var nextPage: String? = url
         do {
-            val process = executeCommand("cf", "curl", nextPage!!)
+            val process = executeCommand("cf", "curl", nextPage!!.replace("\u0026", "&"))
             val res = getMapper().readValue(process.inputStream, clazz)
-            nextPage = res.pagination?.next
+            nextPage = res.pagination?.next?.href
             array.add(res)
         } while(nextPage!=null)
         return adapter(array)
@@ -203,13 +222,14 @@ class CfService {
 }
 
 abstract class CfResponse(val pagination: Pagination?) {
-    data class Pagination(@JsonProperty("pagination") val next: String?)
+    data class Pagination(@JsonProperty("next") val next: Page? = null)
+    data class Page(@JsonProperty("href") val href: String)
 }
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
 class CfAppsResponse @JsonCreator constructor(
-    @JsonProperty("resources") val resources: List<Resource>,
-    @JsonProperty("pagination") pagination: Pagination
+    @JsonProperty("resources") val resources: List<Resource>? = null,
+    @JsonProperty("pagination") pagination: Pagination? = null
 ): CfResponse(pagination) {
     data class Resource(
         @JsonProperty("guid") val guid: String,
