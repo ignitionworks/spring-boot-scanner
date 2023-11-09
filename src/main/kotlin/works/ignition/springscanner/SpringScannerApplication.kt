@@ -19,14 +19,9 @@ class SpringScannerApplication : CommandLineRunner {
 	val logger = LoggerFactory.getLogger(SpringScannerApplication::class.java)
 
 	override fun run(vararg args: String?) {
-		if (args.size != 1) {
-			logger.error("You need to pass a valid space guid")
-			exitProcess(-1)
-		}
-		val spaceGuid = args[0]!!
 		runBlocking {
-			val javaAppDetails = cfService.scanAppsInParallel(spaceGuid)
-			printService.printJson(javaAppDetails)
+			val report = cfService.scanAppsInParallel()
+			printService.printJson(report)
 		}
 	}
 }

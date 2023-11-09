@@ -5,9 +5,9 @@ import org.springframework.stereotype.Service
 
 @Service
 class PrintService {
-    fun printJson(javaAppDetails: List<Map<String, *>>) {
+    fun printJson(report: Any) {
         val mapper = ObjectMapper()
-        val json: String = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(javaAppDetails)
+        val json: String = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(report)
         println(json)
     }
 }

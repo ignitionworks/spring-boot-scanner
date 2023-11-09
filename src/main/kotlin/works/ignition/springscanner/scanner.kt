@@ -23,7 +23,7 @@ class ScannerService {
                 results.add(ManifestScanner(manifestFiles.first()).scan())
             }
 
-            val springBootDependencies = files.filter {it.name.contains(Regex("spring-boot-(\\d\\.\\d\\..*).jar")) }
+            val springBootDependencies = files.filter {it.name.contains(Regex("^spring-boot-(\\d\\.\\d\\..*).jar$")) }
             if (springBootDependencies.isNotEmpty()) {
                 results.add(SpringBootDependencyScanner(springBootDependencies.first()).scan())
             }
@@ -65,6 +65,7 @@ class ManifestScanner : FileScanner {
     override fun scan(): Result {
         var springBootVersion: String? = null
         var javaVersion: String? = null
+        // FIXME Apparently this is leaving the file open in Windows
         file.bufferedReader().lines().forEach(Consumer { line ->
             if (javaVersion != null && springBootVersion != null)
                 return@Consumer

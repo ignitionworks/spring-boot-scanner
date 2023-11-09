@@ -18,8 +18,9 @@ import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Configuration
 import org.springframework.context.annotation.ImportRuntimeHints
 import org.springframework.stereotype.Service
-import org.springframework.util.FileSystemUtils
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.Path
 
 @Service
 class CfService {
@@ -30,24 +31,35 @@ class CfService {
     @Value("\${cleanupDroplets}") lateinit var cleanupDroplets: String
     @Value("\${scannedAppsInParallel}") lateinit var scannedAppsInParallel: String
 
+    @Value("#{systemProperties['user.home']}") lateinit var homeDir: String
+
     val logger = LoggerFactory.getLogger(CfService::class.java)
 
-    suspend fun scanAppsInParallel(spaceGuid: String): List<Map<String, *>> {
+    suspend fun scanAppsInParallel(): Any {
         val semaphore = Semaphore(scannedAppsInParallel.toInt())
-        val apps = getApps(spaceGuid)
+        val config = getCfConfig()
+        val apps = getApps(config.spaceFields.guid)
         return coroutineScope {
             val deferredResults = apps.map {
                 // To ensure that the tasks run in parallel using threads
                 // designed for tasks that perform I/O operations
                 async(Dispatchers.IO) {
                     semaphore.withPermit {
-                        getAppDetails(it.name, it.guid)
+                        getAppDetails(it)
                     }
                 }
             }
-            deferredResults.awaitAll()
+            // TODO modifiy what we return
+            val appDetails = deferredResults.awaitAll()
+            mapOf(
+                "config" to config,
+                "appDetails" to appDetails
+            )
         }
     }
+
+    private fun getCfConfig() =
+        getMapper().readValue(File("${homeDir}/.cf/config.json"), CfConfig::class.java)
 
     private fun getApps(spaceGuid: String): List<CfAppsResponse.Resource> {
         return cfCurl("/v3/apps?order_by=name&space_guids=${spaceGuid}", CfAppsResponse::class.java) { res: List<CfAppsResponse> ->
@@ -55,46 +67,53 @@ class CfService {
         }
     }
 
-    private suspend fun getAppDetails(appName: String, guid: String): Map<String, *> {
+    private suspend fun getAppDetails(app: CfAppsResponse.Resource): Map<String, *> {
         val procs = try {
-            logger.info("Extracting app processes info for app = $appName")
-            getAppProcesses(guid)
+            logger.info("Extracting app processes info for app = $app.name")
+            getAppProcesses(app.guid)
         } catch(e: Exception) {
-            logger.error("Error extracting app processes info for app = $appName", e)
+            logger.error("Error extracting app processes info for app = $app.name", e)
             null
         }
         val stats = try {
-            logger.info("Extracting app process stats info for app = $appName")
-            getAppProcessStats(guid)
+            logger.info("Extracting app process stats info for app = $app.name")
+            getAppProcessStats(app.guid)
         } catch(e: Exception) {
-            logger.error("Error extracting app process stats info for app = $appName", e)
+            logger.error("Error extracting app process stats info for app = $app.name", e)
             null
         }
         val jdkEnv = try {
-            logger.info("Extracting jdk env info for app = $appName")
-            getAppJdkEnv(guid)
+            logger.info("Extracting jdk env info for app = $app.name")
+            getAppJdkEnv(app.guid)
         } catch(e: Exception) {
-            logger.error("Error extracting app jdk env info for app = $appName", e)
+            logger.error("Error extracting app jdk env info for app = $app.name", e)
             null
         }
         val droplet = try {
-            logger.info("Extracting app droplet info for app = $appName")
-            getAppDroplet(guid)
+            logger.info("Extracting app droplet info for app = $app.name")
+            getAppDroplet(app.guid)
         } catch(e: Exception) {
-            logger.error("Error extracting app droplet info for app = $appName", e)
+            logger.error("Error extracting app droplet info for app = $app.name", e)
             null
         }
         var scanResults: List<FileScanner.Result>? = null
         if (droplet?.guid != null && droplet.buildpacks != null && droplet.buildpacks.any { it.name?.contains("java") ?: false }) {
             scanResults = try {
-                logger.info("Scanning java app = $appName")
-                getScanResults("${droplet!!.guid}", appName)
+                logger.info("Scanning java app = $app.name")
+                getScanResults("${droplet!!.guid}", app.name)
             } catch(e: Exception) {
-                logger.error("Error scanning java app = $appName", e)
+                logger.error("Error scanning java app = $app.name", e)
                 null
             }
         }
-        return mapOf("appGuid" to guid, "processes" to procs, "stats" to stats, "jdkEnv" to jdkEnv, "droplet" to droplet, "scanResults" to scanResults)
+        return mapOf(
+            "app" to app,
+            "processes" to procs,
+            "stats" to stats,
+            "jdkEnv" to jdkEnv,
+            "droplet" to droplet,
+            "scanResults" to scanResults
+        )
     }
 
     private fun getAppProcesses(guid: String) =
@@ -159,7 +178,7 @@ class CfService {
     private fun extractAppFolderFromDroplet(dropletFileName: String) {
         val dropletFolderPath = "${dropletsTmpFolder}/${dropletFileName}"
         removeFile(dropletFolderPath)
-        createDropletFolder(dropletFolderPath)
+        createFolder(dropletFolderPath)
         extractAppFolder(dropletFolderPath)
     }
 
@@ -173,7 +192,7 @@ class CfService {
         }
     }
 
-    private fun createDropletFolder(dropletFolderPath: String) {
+    private fun createFolder(dropletFolderPath: String) {
         try {
             val result = File(dropletFolderPath).mkdir()
             if (!result) throw RuntimeException()
@@ -187,9 +206,10 @@ class CfService {
             val file = File(filePath)
             if (!file.exists())
                 return
-            val result = FileSystemUtils.deleteRecursively(file)
-            // FIXME Failing on windows 
-            // if (!result) throw RuntimeException()
+            Files.walk(file.toPath())
+                .sorted(Comparator.reverseOrder())
+                .map(Path::toFile)
+                .forEach {it.delete() }
         } catch (e: Exception) {
             throw RuntimeException("Error removing $filePath", e)
         }
@@ -221,6 +241,23 @@ class CfService {
     }
 }
 
+@JsonInclude(JsonInclude.Include.NON_NULL)
+data class CfConfig(
+    @JsonProperty("OrganizationFields") val organizationFields: OrganizationFields,
+    @JsonProperty("SpaceFields") val spaceFields: SpaceFields,
+    @JsonProperty("Target") val target: String,
+    @JsonProperty("APIVersion") val apiVersion: String
+) {
+    data class OrganizationFields(
+        @JsonProperty("GUID") val guid: String,
+        @JsonProperty("Name") val name: String
+    )
+    data class SpaceFields(
+        @JsonProperty("GUID") val guid: String,
+        @JsonProperty("Name") val name: String
+    )
+}
+
 abstract class CfResponse(val pagination: Pagination?) {
     data class Pagination(@JsonProperty("next") val next: Page? = null)
     data class Page(@JsonProperty("href") val href: String)
@@ -233,7 +270,10 @@ class CfAppsResponse @JsonCreator constructor(
 ): CfResponse(pagination) {
     data class Resource(
         @JsonProperty("guid") val guid: String,
-        @JsonProperty("name") val name: String
+        @JsonProperty("name") val name: String,
+        @JsonProperty("created_at") val createdAt: String,
+        @JsonProperty("updated_at") val updatedAt: String,
+        @JsonProperty("state") val state: String,
     )
 }
 
