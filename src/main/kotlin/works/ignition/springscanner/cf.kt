@@ -135,7 +135,7 @@ class CfService {
             CfAppEnvsResponse::class.java
         ) { res: List<CfAppEnvsResponse> ->
             val filteredEnvVariables = res.filter {
-                it.environmentVariables !=null && it.environmentVariables.contains("JBP_CONFIG_OPEN_JDK_JRE")
+                it.environmentVariables != null && it.environmentVariables.contains("JBP_CONFIG_OPEN_JDK_JRE")
             }
             if (filteredEnvVariables.isNotEmpty())
                 filteredEnvVariables[0].environmentVariables!!["JBP_CONFIG_OPEN_JDK_JRE"]
@@ -219,12 +219,33 @@ class CfService {
         val array = mutableListOf<T>()
         var nextPage: String? = url
         do {
-            val process = executeCommand("cf", "curl", nextPage!!.replace("\u0026", "&"))
-            val res = getMapper().readValue(process.inputStream, clazz)
+            val res = withExponentialBackoff {
+                val process = executeCommand("cf", "curl", nextPage!!.replace("\u0026", "&"))
+                getMapper().readValue(process.inputStream, clazz)
+            }
             nextPage = res.pagination?.next?.href
             array.add(res)
         } while(nextPage!=null)
         return adapter(array)
+    }
+
+    private fun <T: CfResponse> withExponentialBackoff(maxRetries: Int = 3, initialDelay: Long = 300L, action: () -> T): T {
+        var retries = 0
+        var delay = initialDelay
+
+        while (true) {
+            try {
+                return action()
+            } catch (e: RuntimeException) {
+                retries++
+                if (retries >= maxRetries) {
+                    throw e
+                }
+                // We might to consider using coroutines.delay for better performance
+                Thread.sleep(delay)
+                delay *= 2
+            }
+        }
     }
 
     private fun executeCommand(vararg command: String, directory: File = File(System.getProperty("user.home"))): Process {
@@ -282,9 +303,9 @@ class CfAppProcessesResponse @JsonCreator constructor(
     @JsonProperty("pagination") pagination: Pagination? = null
 ): CfResponse(pagination) {
     data class Resource(
-        @JsonProperty("instances") val instances: Integer? = null,
-        @JsonProperty("disk_in_mb") val diskInMb: Integer? = null,
-        @JsonProperty("memory_in_mb") val memoryInMb: Integer? = null
+        @JsonProperty("instances") val instances: String? = null,
+        @JsonProperty("disk_in_mb") val diskInMb: String? = null,
+        @JsonProperty("memory_in_mb") val memoryInMb: String? = null
     )
 }
 
@@ -298,8 +319,8 @@ class CfAppProcessStatsResponse @JsonCreator constructor(
     )
     data class Usage(
         @JsonProperty("cpu") val cpu: Float? = null,
-        @JsonProperty("mem") val mem: Integer? = null,
-        @JsonProperty("disk") val disk: Integer? = null,
+        @JsonProperty("mem") val mem: String? = null,
+        @JsonProperty("disk") val disk: String? = null,
     )
 }
 

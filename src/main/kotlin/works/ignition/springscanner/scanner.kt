@@ -65,13 +65,14 @@ class ManifestScanner : FileScanner {
     override fun scan(): Result {
         var springBootVersion: String? = null
         var javaVersion: String? = null
-        // FIXME Apparently this is leaving the file open in Windows
-        file.bufferedReader().lines().forEach(Consumer { line ->
-            if (javaVersion != null && springBootVersion != null)
-                return@Consumer
-            javaVersion = extractValue(line, "Build-Jdk.*: (.*)") ?: javaVersion
-            springBootVersion = extractValue(line, "Spring-Boot-Version: (.*)") ?: springBootVersion
-        })
+        file.bufferedReader().use {
+            it.lines().forEach(Consumer { line ->
+                if (javaVersion != null && springBootVersion != null)
+                    return@Consumer
+                javaVersion = extractValue(line, "Build-Jdk.*: (.*)") ?: javaVersion
+                springBootVersion = extractValue(line, "Spring-Boot-Version: (.*)") ?: springBootVersion
+            })
+        }
         return Result(file.name, this.javaClass.name, javaVersion, springBootVersion)
     }
 }
