@@ -46,15 +46,13 @@ class CfService {
         val apps = getApps(config.spaceFields.guid)
         return coroutineScope {
             val deferredResults = apps.map {
-                // To ensure that the tasks run in parallel using threads
-                // designed for tasks that perform I/O operations
+                // Ensures that tasks run in parallel using threads
                 async(Dispatchers.IO) {
                     semaphore.withPermit {
                         getAppDetails(it)
                     }
                 }
             }
-            // TODO modifiy what we return
             val appDetails = deferredResults.awaitAll()
             mapOf(
                 "config" to config,
