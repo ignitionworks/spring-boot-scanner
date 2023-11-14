@@ -19,8 +19,6 @@ class ScannerService {
     fun scanAppFolder(appFolder: String): FileScanner.Response {
         val scannedFiles = mutableListOf<FileScanner.ScannedFile>()
         val results = mutableListOf<FileScanner.Result>()
-        // TODO Avoid looping multiple times for improving performance
-        // Currently keeping the algorithm for simplicity sake
         Files.walk(Paths.get(appFolder)).use { walk ->
             var classScanned = false
             walk.forEach {
