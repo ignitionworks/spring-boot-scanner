@@ -24,7 +24,7 @@ dependencies {
 	implementation("org.jetbrains.kotlin:kotlin-reflect")
 	implementation("com.fasterxml.jackson.core:jackson-databind:2.15.3")
 	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core")
-	implementation("org.rauschig:jarchivelib:1.2.0")
+	implementation("org.apache.commons:commons-compress:1.24.0")
 	developmentOnly("org.springframework.boot:spring-boot-devtools")
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
 }

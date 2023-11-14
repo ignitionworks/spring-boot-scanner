@@ -8,7 +8,8 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import org.rauschig.jarchivelib.ArchiverFactory
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
+import org.apache.commons.compress.compressors.gzip.GzipCompressorInputStream
 import org.slf4j.LoggerFactory
 import org.springframework.aot.hint.ExecutableMode
 import org.springframework.aot.hint.RuntimeHints
@@ -18,9 +19,13 @@ import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Configuration
 import org.springframework.context.annotation.ImportRuntimeHints
 import org.springframework.stereotype.Service
+import java.io.BufferedInputStream
 import java.io.File
+import java.io.FileInputStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.Paths
+
 
 @Service
 class CfService {
@@ -96,7 +101,7 @@ class CfService {
             logger.error("Error extracting app droplet info for app = $app.name", e)
             null
         }
-        var scanResults: List<FileScanner.Result>? = null
+        var scanResults: FileScanner.Response? = null
         if (droplet?.guid != null && droplet.buildpacks != null && droplet.buildpacks.any { it.name?.contains("java") ?: false }) {
             scanResults = try {
                 logger.info("Scanning java app = $app.name")
@@ -151,7 +156,7 @@ class CfService {
             res[0]
         }
 
-    private fun getScanResults(dropletGuid: String, appName: String): List<FileScanner.Result>? {
+    private fun getScanResults(dropletGuid: String, appName: String): FileScanner.Response? {
         val dropletFileName = "droplet_${dropletGuid}"
         if (downloadDroplets.toBoolean()) {
             downloadDroplet(appName, dropletFileName)
@@ -184,11 +189,29 @@ class CfService {
 
     private fun extractAppFolder(dropletFolderPath: String) {
         try {
-            val archiver = ArchiverFactory.createArchiver("tar", "gz")
-            // TODO Extract just the app folder
-            archiver.extract(File("${dropletFolderPath}.tgz"), File(dropletFolderPath))
+            extractSpecificDirectory("${dropletFolderPath}.tgz", "./app", dropletFolderPath)
         } catch (e: Exception) {
             throw RuntimeException("Error extracting file ${dropletFolderPath}.tgz into folder $dropletFolderPath", e)
+        }
+    }
+
+    fun extractSpecificDirectory(tarGzPath: String, directoryToExtract: String, destinationFolder: String) {
+        TarArchiveInputStream(GzipCompressorInputStream(BufferedInputStream(FileInputStream(tarGzPath)))).use { tarInput ->
+            var tarEntry = tarInput.nextTarEntry
+            while (tarEntry != null) {
+                if (tarEntry.name.startsWith(directoryToExtract)) {
+                    val relativePath = tarEntry.name.removePrefix(directoryToExtract)
+                    val destPath = Paths.get(destinationFolder, directoryToExtract, relativePath)
+
+                    if (tarEntry.isDirectory) {
+                        Files.createDirectories(destPath)
+                    } else {
+                        Files.createDirectories(destPath.parent)
+                        Files.copy(tarInput, destPath)
+                    }
+                }
+                tarEntry = tarInput.nextTarEntry
+            }
         }
     }
 

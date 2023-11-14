@@ -4,45 +4,72 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.io.DataInputStream
 import java.io.File
+import java.math.BigInteger
 import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.Paths
+import java.security.MessageDigest
 import java.util.function.Consumer
 import java.util.regex.Pattern
-import java.util.stream.Collectors
+import kotlin.io.path.*
+
 
 @Service
 class ScannerService {
-    fun scanAppFolder(appFolder: String): List<FileScanner.Result> {
+    fun scanAppFolder(appFolder: String): FileScanner.Response {
+        val scannedFiles = mutableListOf<FileScanner.ScannedFile>()
         val results = mutableListOf<FileScanner.Result>()
+        // TODO Avoid looping multiple times for improving performance
+        // Currently keeping the algorithm for simplicity sake
         Files.walk(Paths.get(appFolder)).use { walk ->
-            val files = walk.filter(Files::isRegularFile)
-                .map { x -> x.toFile() }.collect(Collectors.toList())
-
-            val manifestFiles = files.filter { it.name.contains("MANIFEST.MF") }
-            if (manifestFiles.isNotEmpty()) {
-                results.add(ManifestScanner(manifestFiles.first()).scan())
-            }
-
-            val springBootDependencies = files.filter {it.name.contains(Regex("^spring-boot-(\\d\\.\\d\\..*).jar$")) }
-            if (springBootDependencies.isNotEmpty()) {
-                results.add(SpringBootDependencyScanner(springBootDependencies.first()).scan())
-            }
-
-            val classFiles = files.filter { it.name.contains(".class") }
-            if (classFiles.isNotEmpty()) {
-                results.add(ClassScanner(classFiles.first()).scan())
+            var classScanned = false
+            walk.forEach {
+                if (!it.isRegularFile() ||
+                        it.pathString.contains(".java-buildpack") ||
+                        it.name.endsWith(".cached") ||
+                        it.name.endsWith(".etag") ||
+                        it.name.endsWith(".last_modified")) {
+                    return@forEach
+                }
+                scannedFiles.add(extractFileDetails(it))
+                if (it.name.contains("MANIFEST.MF")) {
+                    results.add(ManifestScanner(it.toFile()).scan())
+                } else if (it.name.contains(Regex("^spring-boot-(\\d\\.\\d\\..*).jar$"))) {
+                    results.add(SpringBootDependencyScanner(it.toFile()).scan())
+                } else if (!classScanned && it.name.contains(".class")) {
+                    results.add(ClassScanner(it.toFile()).scan())
+                    classScanned = true
+                }
             }
         }
-        return results
+        return FileScanner.Response(scannedFiles, results)
+    }
+
+    private fun extractFileDetails(path: Path): FileScanner.ScannedFile {
+        val data = Files.readAllBytes(path)
+        val hash = MessageDigest.getInstance("MD5").digest(data)
+        val checksum: String = BigInteger(1, hash).toString(16)
+        return FileScanner.ScannedFile(path.absolutePathString(), path.fileSize().toString(), checksum)
     }
 }
 
 abstract class FileScanner {
+    data class Response(
+        val scannedFiles: List<ScannedFile>,
+        val results: List<Result>
+    )
+
     data class Result(
         val fileName: String,
         val scannerType: String,
         val javaVersion: String?,
         val springBootVersion: String?
+    )
+
+    data class ScannedFile(
+        val filePath: String,
+        val length: String,
+        val checksum: String
     )
 
     protected var file: File
